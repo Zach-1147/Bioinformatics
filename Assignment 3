@@ -1,0 +1,401 @@
+# Code from assignment 2
+
+#Load relevant libraries, and some extra packages commented out below. I am suppressing messages here and loading libraries in one line to save space.
+#install.packages("gridExtra")
+#install.packages(patchwork")
+invisible(capture.output(
+  lapply(c("rentrez", "seqinr", "Biostrings", "tidyverse", "ggplot2", "patchwork", "gridExtra", "grid", "randomForest", "scales"),
+         library, character.only = TRUE)
+))
+
+#Call data from NCBI by first storing web_history data for searches of both genes. 
+ND4_search <- entrez_search(db = "nuccore", term = "(Mammalia[ORGN] AND ND4[Gene]) AND 800:2400[SLEN]", use_history = TRUE, retmax = 1400)
+ND4_search
+
+COX1_search <- entrez_search(db = "nuccore", term = "(Mammalia[ORGN] AND COX1[Gene]) AND 800:2200[SLEN]", use_history = TRUE, retmax = 1400)
+COX1_search
+
+#Save the fetch for ND4 to ND4_gene.fasta in the working directory using loop from entrez documentation
+for( seq_start in seq(1,1400,100)){
+    recs <- entrez_fetch(db="nuccore", web_history=ND4_search$web_history,
+    rettype="fasta", retmax=100, retstart=seq_start)
+    cat(recs, file="ND4_gene.fasta", append=TRUE)
+}
+for( seq_start in seq(1,1400,100)){
+    recs <- entrez_fetch(db="nuccore", web_history=COX1_search$web_history,
+    rettype="fasta", retmax=100, retstart=seq_start)
+    cat(recs, file="COX1_gene.fasta", append=TRUE)
+}
+#Convert both fasta files to DNA String Sets with Biostrings package.
+ND4_Stringset <- readDNAStringSet("ND4_gene.fasta")
+COX1_Stringset <- readDNAStringSet("COX1_gene.fasta")
+
+#Now convert both data sets to data frames for manipulation with tidyverse functions. Include a trailing "_pre" in the variable name to identify this data frame as a pre-processing item (prior to quality control).
+df_ND4_pre <- data.frame(ND4_Title = names(ND4_Stringset), ND4_Sequence = paste(ND4_Stringset))
+
+df_COX1_pre <- data.frame(COX1_Title = names(COX1_Stringset), COX1_Sequence = paste(COX1_Stringset))
+
+#Confirm we have the expected number of records for each gene (1400)
+(length(unique(df_COX1_pre$COX1_Title)))
+(length(unique(df_ND4_pre$ND4_Title)))
+
+#Cleaning up the data frames, we can add a column containing just Genus names, pulling out the second and third tab spaces from the title column of each of our two data frames.
+df_ND4_pre$Genus_Name <- word(df_ND4_pre$ND4_Title, 2L)
+df_ND4_pre <- df_ND4_pre[, c("ND4_Title", "Genus_Name", "ND4_Sequence")]
+
+#Now for COX1
+df_COX1_pre$Genus_Name <- word(df_COX1_pre$COX1_Title, 2L)
+df_COX1_pre <- df_COX1_pre[, c("COX1_Title", "Genus_Name", "COX1_Sequence")]
+
+#First check all values from both data frames for missing data.
+any(is.na(df_COX1_pre))
+any(is.na(df_ND4_pre))
+
+#Now we will examine the distribution for various features to ensure they are comparable between the two genes. Begin with identifying missing nucleotide information on the ends or gaps within the sequences. Sum the any occurrences of the string patterns below, to quickly see if they exist in the data. 
+(total_count_COX1 <- sum(str_count(df_COX1_pre$COX1_Sequence, "^[-N]+")) +
+               sum(str_count(df_COX1_pre$COX1_Sequence, "[-N]+$")) +
+               sum(str_count(df_COX1_pre$COX1_Sequence, "-+")))
+
+(total_count_ND4 <- sum(str_count(df_ND4_pre$ND4_Sequence, "^[-N]+")) +
+                   sum(str_count(df_ND4_pre$ND4_Sequence, "[-N]+$")) +
+                   sum(str_count(df_ND4_pre$ND4_Sequence, "-+")))
+
+#Since both of these returned zeroes, we will investigate the proportions of missing nucleotides between the two genes independently of gaps and ending 'N's.
+
+#add a column to calculate the percentage of Ns in each sequence.
+df_COX1_pre$N_proportion <- str_count(df_COX1_pre$COX1_Sequence, "N")/str_count(df_COX1_pre$COX1_Sequence)
+
+df_ND4_pre$N_proportion <- str_count(df_ND4_pre$ND4_Sequence, "N")/str_count(df_ND4_pre$ND4_Sequence)
+
+#Create a summary data frame for both genes and calculate the following for records with nonzero N_proportions: total record count, count of proportions above 5%, mean and standard deviation.
+N_summary_cox1 <- df_COX1_pre %>%
+  summarise(
+    Count_Ns = sum(N_proportion != 0),
+    Count_Ns_Above_05 = sum(N_proportion >= 0.05),
+    Mean_Ns_Nonzero = mean(N_proportion[N_proportion != 0]),
+    Sd_Ns_Nonzero = sd(N_proportion[N_proportion != 0])
+  )
+
+N_summary_nd4 <- df_ND4_pre %>%
+  summarise(
+    Count_Ns = sum(N_proportion != 0),
+    Count_Ns_Above_05 = sum(N_proportion >= 0.05),
+    Mean_Ns_Nonzero = mean(N_proportion[N_proportion != 0]),
+    Sd_Ns_Nonzero = sd(N_proportion[N_proportion != 0])
+  )
+
+#Combine the summaries into a single data frame for viewing, printing to screen.
+(combined_summary <- rbind(COX1 = N_summary_cox1, ND4 = N_summary_nd4))
+
+#Test a few different cut-off thresholds with a small loop (I like loops for some reason, but I know they are discouraged)
+
+#create atomic vector of decreasing cutoff percentages
+thresholds <- c(0.05,0.04, 0.03, 0.02, 0.01, 0.005, 0.0025, 0.00125)
+
+#loop through the thresholds and save to an empty results data frame with each iteration. Include columns for calculations of total counts, difference in counts, and cumulative total counts (n_Excluded)
+results <- data.frame(
+  Threshold = numeric(0),
+  COX1_Count = integer(0),
+  ND4_Count = integer(0),
+  Difference = integer(0),
+  n_Excluded = integer(0)
+)
+
+for (cutoff in thresholds) {
+  count_cox1 <- sum(df_COX1_pre$N_proportion >= cutoff)
+  count_nd4 <- sum(df_ND4_pre$N_proportion >= cutoff)
+  
+results <- rbind(results, data.frame(
+    Threshold = cutoff,
+    COX1_Count = count_cox1,
+    ND4_Count = count_nd4,
+    Difference = abs(count_cox1 - count_nd4),
+    n_Excluded = (count_cox1 + count_nd4)
+  ))
+}
+#Sort the table in decreasing order of the Difference column to see the top 3 results, only showing the threshold value, Difference, and total exclusion number columns.
+(selected_columns <- results[order(results$Difference), ][1:3, ][, c(1, 4, 5)])
+
+#Based on above analysis, filter to retain only N_Proportions less than or equal to 1% and save to a new data frame. See Discussion paragraph, "Quality Control" for more information.
+df_COX1 <- df_COX1_pre %>%
+  filter(N_proportion <= 0.01)
+
+df_ND4 <- df_ND4_pre %>%
+  filter(N_proportion <= 0.01)
+
+#Calculate a new mean for nonzero N_Proportions for both genes to confirm they are closer than before the threshold change. These are calculated within the comparison table below.
+comparison_table <- data.frame(
+  Gene = c("COX1", "ND4"),
+  Mean_Ns_Before_Excl = c(N_summary_cox1$Mean_Ns_Nonzero, N_summary_nd4$Mean_Ns_Nonzero),
+  Mean_Ns_After_Excl = c(mean(df_COX1$N_proportion[df_COX1$N_proportion != 0]), mean(df_ND4$N_proportion[df_ND4$N_proportion != 0]))
+)
+print(comparison_table)
+
+#Create a comparison table including information on mean sequence length, standard deviation in sequence length, as well as number of unique genera 
+df_initial_comparison <- data.frame(Mean_Seq_Length = c(mean(str_count(df_COX1$COX1_Sequence)), mean(str_count(df_ND4$ND4_Sequence))), Sd_Seq_Length = c(sd(str_count(df_COX1$COX1_Sequence)), sd(str_count(df_ND4$ND4_Sequence))), Unique_Genus = c(length(unique(df_COX1$Genus_Name)), length(unique(df_ND4$Genus_Name)))
+) 
+
+#Add in row names corresponding to each gene and print the data frame.
+rownames(df_initial_comparison) <- c("COX1", "ND4")
+print(df_initial_comparison)
+
+#Group each data frame by genus and summarize with a count of records for each. See Discussion paragraph, "Genus Representation" for more information.
+df_COX1_by_genus <- df_COX1 %>%
+  dplyr::group_by(Genus_Name) %>% 
+  dplyr::summarize(Record_Count = n()) %>% 
+  dplyr::arrange(desc(Record_Count)) 
+
+df_ND4_by_genus <- df_ND4 %>%
+  dplyr::group_by(Genus_Name) %>% 
+  dplyr::summarize(Record_Count = n()) %>%
+  dplyr::arrange(desc(Record_Count)) 
+
+#Combine the "..._by_genus" data frames into a single data frame with a column for gene name included.  
+combined_by_genus <- rbind(df_COX1_by_genus %>% mutate(Gene = "COX1"),
+                       df_ND4_by_genus %>% mutate(Gene = "ND4"))
+
+#Find common genera by finding the intersection of unique genera to each gene.
+common_genera <- intersect(unique(df_ND4_by_genus$Genus_Name), unique(df_COX1_by_genus$Genus_Name))
+
+# Add another column containing a True or False depending on if the genus is common to both genes or not.
+combined_by_genus <- combined_by_genus %>%
+  mutate(Is_Common_Genus = Genus_Name %in% common_genera)
+
+#Show how many common genera there are (note, divide by two because each common genus will appear twice in our combined table)
+cat(sum(combined_by_genus$Is_Common_Genus == TRUE) / 2, " Common Genera\n")
+
+#Filter the combined_by_genus data frame to show genus grouped frequency counts for 1) genera unique to COX1, and 2) Genera unique to ND4. Save the values to the previously defined grouped data frames. This provides Genera unique to each gene now.
+df_COX1_by_genus <- combined_by_genus %>%
+  dplyr::filter(Gene == "COX1") %>%
+  dplyr::filter(Is_Common_Genus == FALSE) 
+
+df_ND4_by_genus <- combined_by_genus %>%
+  dplyr::filter(Gene == "ND4") %>%
+  dplyr::filter(Is_Common_Genus == FALSE) 
+
+#Create a record count data frame of common genera, starting with only gene first, COX1. 
+unique_common_genera <- combined_by_genus %>%
+  dplyr::filter(Is_Common_Genus == TRUE) %>%
+  dplyr::filter(Gene == "COX1") 
+
+#Now replace Record_Count with Record_Count_COX1
+unique_common_genera <- unique_common_genera %>%
+  rename(Record_Count_COX1 = Record_Count)
+
+#Create a data frame with nd4_counts by Genus_Name, and then join it to unique_common_genera, using Genus_Name to match rows appropriately. Print the first 5 rows of this data frame to ensure it looks right.
+ND4_counts <- combined_by_genus %>%
+  dplyr::filter(Gene == "ND4", Is_Common_Genus == TRUE) %>%
+  dplyr::group_by(Genus_Name) %>%
+  dplyr::summarize(Record_Count_ND4 = (Record_Count))
+
+unique_common_genera <- unique_common_genera %>%
+  dplyr::left_join(ND4_counts, by = c("Genus_Name" = "Genus_Name"))
+
+#Remove columns Gene and Is_Common_Genera from the data frame, as no longer needed
+unique_common_genera <- unique_common_genera[ -c(3:4) ]
+
+#NOW PREPARE SUMMARY STATISTICS FOR THE ABOVE
+
+#Create data variables with unique genera for ND4 and COX1 displaying only the top 50 most abundant genera for each, which captures the vast majority of the distribution as far as the random forest model is concerned.
+top_50_COX1 <- df_COX1_by_genus[1:50, ]
+top_50_ND4 <- df_ND4_by_genus[1:50, ]
+
+#Create a circular histogram of COX1 Genus frequency counts, adapted from https://r-graph-gallery.com/
+cox1_plot <- ggplot(top_50_COX1, aes(x = Genus_Name, y = log1p(Record_Count), fill = "COX1")) +
+  geom_bar(stat = "identity", fill=alpha("#8F5902", 0.6)) +
+  scale_fill_manual(values = c("COX1")) +
+  coord_polar() +
+  #adjust size of circle with range of y values
+  ylim(-7, 7) +
+  theme_minimal() +
+  #Since plotting side by side, put legend information in one plot
+  labs(title = NULL, x = "Each Bar Represents One Unique Genus; Data is log transformed", y = "COX1") +
+  theme(
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    panel.grid = element_blank(),
+    legend.title = element_blank(),
+    plot.margin = ggplot2::margin(l = 0, r = 5, unit = "pt")
+  ) +
+  geom_text(aes(label = Record_Count, y = log1p(Record_Count) + 0.7),
+            color = "black", fontface = "bold", alpha = 0.7, size =3)
+
+#Repeat for ND4
+nd4_plot <- ggplot(top_50_ND4, aes(x = Genus_Name, y = log1p(Record_Count), fill = "ND4")) +
+  geom_bar(stat = "identity", fill=alpha("#204A87", 0.6)) +
+  scale_fill_manual(values = c("ND4")) +
+  coord_polar() +
+  ylim(-7, 7) +
+  theme_minimal() +
+  labs(title = NULL, x = NULL, y = "ND4") +
+  theme(
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    panel.grid = element_blank(),
+    legend.title = element_blank(),
+    plot.margin = ggplot2::margin(l = 5, r = 0, unit = "pt")
+  ) +
+  geom_text(aes(label = Record_Count, y = log1p(Record_Count) + 0.7),
+            color = "black", fontface = "bold", alpha = 0.7, size = 3)
+
+#Create a text grob for grid arrangement of side by side plots (turns out better than simply doing plot + plot function.)
+title_text <- textGrob("                 Comparative Historgrams of Record Counts for Uinque Genera of: 
+                          COX1 (Left) and ND4 (Right)", 
+                       gp = gpar(fontsize = 20, fontface = "bold", alpha = 0.7))
+
+#Arrange the plots side by side with grid.arrange (from package)
+combined_plot <- grid.arrange(cox1_plot, nd4_plot, ncol = 2,  top = title_text)
+
+#Add a column that sums the two gene records and calculates a total % representation of that genus for the whole data set (both genes)
+unique_common_genera$Genus_perc <- ((unique_common_genera$Record_Count_COX1) + (unique_common_genera$Record_Count_ND4))/(nrow(df_COX1) + nrow(df_ND4))
+
+#Add another column that calculates the difference in record frequencies between the two genes, and multiplies it by the genus percentage column. This will provide a quantitative measure of the differential abundance for all common genera, scaled for importance by their relative proportions in the overall data set. 
+unique_common_genera$Scaled_Difference <- abs((unique_common_genera$Record_Count_COX1) - (unique_common_genera$Record_Count_ND4))*unique_common_genera$Genus_perc
+
+#Now we can filter unique_common_genera to retain only genera with a nonzero scaled difference value.
+unique_common_genera <- unique_common_genera %>%
+  filter(Scaled_Difference != 0) %>%
+  dplyr::arrange(desc(Scaled_Difference))
+
+#Visualize the scaled difference for each common Genus with a square root transformed heat plot.
+ggplot(unique_common_genera, aes(x = Genus_Name, y = 1, fill = sqrt(Scaled_Difference))) +
+  geom_tile() +
+  scale_fill_gradient(low = "#204A87", high = "#8F5902") +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, size = 12.5),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.title.y = element_blank(),
+    plot.title = element_text(size = 20, vjust = 17)
+  ) +
+  labs(title = "Heatmap of Scaled Difference in Genus Frequencies Between ND4 and COX1 sequences", x = "Genus") +
+  coord_fixed(ratio = 1.5)  # Adjust this ratio to change the plot height
+
+#Combine the two main data frames into one df_all. First, make column names identical
+df_COX1 <- df_COX1 %>%  
+  rename(Sequence = COX1_Sequence)%>%  
+  rename(Title = COX1_Title)
+
+#Add a label to indicate which data set each came from     
+df_COX1$Gene <- "COX1"
+df_ND4$Gene <- "ND4"
+
+df_ND4 <- df_ND4 %>% 
+  rename(Sequence = ND4_Sequence) %>% 
+  rename(Title = ND4_Title)  
+
+df_all <- rbind(df_COX1, df_ND4)
+
+#Now convert the sequence column to a stringset.
+df_all$Sequence <- DNAStringSet(df_all$Sequence)
+
+#Adding a column for each nucleotides total count to df_all
+df_all <- cbind(df_all, as.data.frame(letterFrequency(df_all$Sequence, letters = c("A", "C","G", "T"))))
+
+#Calculate proportions of A, T and G as independent variables for use in feature development (we only need 3 since once 3 are known the 4th is no longer independent and thus not helpful in classifying.)
+df_all$Aprop <- (df_all$A) / (df_all$A + df_all$T + df_all$C + df_all$G)
+df_all$Tprop <- (df_all$T) / (df_all$A + df_all$T + df_all$C + df_all$G)
+df_all$Gprop <- (df_all$G) / (df_all$A + df_all$T + df_all$C + df_all$G)
+
+#Add dinucleotide and trinucleotide frequencies as proportions to minimize the effects of sequence length variation
+df_all <- cbind(df_all, as.data.frame(dinucleotideFrequency(df_all$Sequence, as.prob = TRUE)))
+
+df_all <- cbind(df_all, as.data.frame(trinucleotideFrequency(df_all$Sequence, as.prob = TRUE)))
+
+#Convert Sequence column back to character for tidyverse compatibility
+df_all$Sequence<- as.character(df_all$Sequence)
+
+#Set aside around 25% of the data for a validation subset. Randomly select 25% of rows from each gene in df_all using tidyverse. 
+
+#Set a variable that takes the average size between the two data sets and multiplies it by 25%, providing a standard sample size to extract for each gene. Make sure to round the number.
+Validation_n <- floor((nrow(df_ND4)+nrow(df_COX1))/2 * .25)
+
+#Set seed for reproducibility.
+set.seed(315)
+
+df_Validation <- df_all%>%
+  group_by(Gene) %>%
+  sample_n(Validation_n)
+
+#Ensure that df_Validation is roughly 25% of total data set and contains both genes proportionally.
+print(nrow((df_Validation)) / nrow(df_all))
+table(df_Validation$Gene)
+
+#Generate a training subset that does not overlap with the validation subset by simply taking rows from df_all that are not in df_Validation. Use the Title as a unique identifier. 
+df_Training <- df_all %>%
+  filter(!Title %in% df_Validation$Title) %>%
+  group_by(Gene) 
+
+#ensure this is roughly 75% of the data and that both genes are represented appropriately.
+nrow(df_Training) / nrow(df_all)
+table(df_Training$Gene)
+
+#Create a randomForest classifier with the training data, using the nucleotide proportions columns (10:12) as predictor features. Print the results to screen.
+gene_classifier1 <- randomForest::randomForest(x = df_Training[, 10:12], y = as.factor(df_Training$Gene), ntree = 100, importance = TRUE)
+
+#We will calculate accuracy as such by extracting the diagonal values of the confusion matrix correct - and summing the correct predictions over all predictions.
+accuracy_training_gene <- sum(diag(gene_classifier1$confusion)) / sum(gene_classifier1$confusion) 
+print(paste("Accuracy:", accuracy_training_gene))
+
+#Test on the validation set and print a table of results.
+predict_Validation <- predict(gene_classifier1, df_Validation[, c(5, 10:12)])
+table(observed = df_Validation$Gene, predicted = predict_Validation)
+
+#Improve the accuracy by finding the optimal number features to include based on the oob estimated error rate. We will run a series of randomforest models and save the error rate as more features are included.
+
+#Store the OOB error rate and feature set size as variables to save from each iteration of a loop. We will use this for a plot.
+results <- data.frame(Num_Features = integer(), OOB_Error_Rate = numeric())
+
+#Define the range values to be used for the random forest inside the loop
+start <- 10
+end <- ncol(df_Training) - 1
+
+for (feature in start:end) {
+  #each iteration will add a feature from 10 to "feature"
+  randomforrest_model <- randomForest::randomForest(
+    x = df_Training[, 10:feature], 
+    y = as.factor(df_Training$Gene), 
+    ntree = 100, 
+    importance = TRUE,
+  )
+  #Extract OOB error  in each iteration
+  oob_error <- randomforrest_model$err.rate[nrow(randomforrest_model$err.rate), "OOB"]
+  #Bind both feature size and error rate to the results data frame.
+  results <- rbind(results, data.frame(Num_Features = feature, OOB_Error_Rate = oob_error))
+}
+
+#plot the a line curve with the number indices of features included on the x axis and the oob error on the y axis.
+ggplot(results, aes(x = Num_Features, y = OOB_Error_Rate)) +
+  geom_line(color = "#8F5902", linewidth = 1.5) +
+  scale_x_continuous(breaks = seq(from = min(results$Num_Features), 
+                                  to = max(results$Num_Features), 
+                                  by = 4)) + #increment by 4 to have reasonable detail
+  theme_minimal() +
+  labs(title = "OOB Error Rate vs. Feature Set Size for Random Forest Classification of ND4 Versus COX1",
+       x = "Feature Column Indices Included",
+       y = "OOB Error Rate") + 
+  theme(plot.title = element_text(size = 20), axis.title.x = element_text(vjust = -3))
+
+#Based on the figure, the optimal number of features is around 30, which is the column around where dinucleotides frequencies end. Train a new model with columns 10:30 as the features
+
+gene_classifier2 <-  randomForest::randomForest(x = df_Training[, 10:30], y = as.factor(df_Training$Gene), ntree = 100, importance = TRUE)
+
+#Test the model again on the validation data set and print a table of results.
+predict_Validation <- predict(gene_classifier2, df_Validation[, c(5, 10:30)])
+table(observed = df_Validation$Gene, predicted = predict_Validation) #Perfect classification!
+
+#Now train a model with these features to see if they can predict the genus from which the sequence originates.
+genus_classifier1 <- randomForest::randomForest(x = df_Training[, 10:30], y = as.factor(df_Training$Genus_Name), ntree = 100, importance = TRUE)
+
+#Looking at accuracy
+accuracy_training <- sum(diag(genus_classifier1$confusion)) / sum(genus_classifier1$confusion)
+print(paste("Accuracy:", accuracy_training))
+
+#Not bad, now test on the validation data.
+predict_Validation <- predict(genus_classifier1, df_Validation[, c(2, 10:30)])
+
+#Looking at accuracy by summing how many predicted values were equal to the correct genus name in the validation set, divided by all rows.
+accuracy_validation <- sum(predict_Validation == df_Validation$Genus_Name) / length(predict_Validation)
+print(paste("Accuracy:", accuracy_validation)) #This is fairly impressive since we were able to resolve a high % (91% at time of writing) of Genus variation without even using sequence length as a feature. 
