@@ -20,6 +20,10 @@ df_ND4_pre <- MergeFastaFiles(filePattern = "ND4_gene*")
 
 df_COX1_pre <- MergeFastaFiles(filePattern = "COX1_gene*")
 
+#Change the column names to specify gene.
+colnames(df_ND4_pre) <- c("ND4_Title", "ND4_Sequence")
+
+colnames(df_COX1_pre) <- c("COX1_Title", "COX1_Sequence")
 
 #Confirm we have the expected number of records for each gene (1400)
 (length(unique(df_COX1_pre$COX1_Title)))
