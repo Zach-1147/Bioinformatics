@@ -2,7 +2,7 @@
 
 #Load relevant libraries, and some extra packages commented out below. I am suppressing messages here and loading libraries in one line to save space.
 #install.packages("gridExtra")
-#install.packages(patchwork")
+#install.packages("patchwork")
 invisible(capture.output(
   lapply(c("rentrez", "seqinr", "Biostrings", "tidyverse", "ggplot2", "patchwork", "gridExtra", "grid", "randomForest", "scales"),
          library, character.only = TRUE)
