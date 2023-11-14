@@ -8,32 +8,16 @@ invisible(capture.output(
          library, character.only = TRUE)
 ))
 
-#Call data from NCBI by first storing web_history data for searches of both genes. 
-ND4_search <- entrez_search(db = "nuccore", term = "(Mammalia[ORGN] AND ND4[Gene]) AND 800:2400[SLEN]", use_history = TRUE, retmax = 1400)
-ND4_search
+#Fetch the gene data required for the analysis to the working directory using functions from entrez documentation.
+FetchFastaFiles(searchTerm = "Mammalia[ORGN] AND ND4[Gene] AND 800:2400 [SLEN]", seqsPerFile = 100, fastaFileName = "ND4_gene")
 
-COX1_search <- entrez_search(db = "nuccore", term = "(Mammalia[ORGN] AND COX1[Gene]) AND 800:2200[SLEN]", use_history = TRUE, retmax = 1400)
-COX1_search
+FetchFastaFiles(searchTerm = "Mammalia[ORGN] AND COX1[Gene] AND 800:2200 [SLEN]", seqsPerFile = 100, fastaFileName = "COX1_gene")
 
-#Save the fetch for ND4 to ND4_gene.fasta in the working directory using loop from entrez documentation
-for( seq_start in seq(1,1400,100)){
-    recs <- entrez_fetch(db="nuccore", web_history=ND4_search$web_history,
-    rettype="fasta", retmax=100, retstart=seq_start)
-    cat(recs, file="ND4_gene.fasta", append=TRUE)
-}
-for( seq_start in seq(1,1400,100)){
-    recs <- entrez_fetch(db="nuccore", web_history=COX1_search$web_history,
-    rettype="fasta", retmax=100, retstart=seq_start)
-    cat(recs, file="COX1_gene.fasta", append=TRUE)
-}
-#Convert both fasta files to DNA String Sets with Biostrings package.
-ND4_Stringset <- readDNAStringSet("ND4_gene.fasta")
-COX1_Stringset <- readDNAStringSet("COX1_gene.fasta")
+#Merge the resulting fasta files for each gene into data frames
+df_ND4_pre <- MergeFastaFiles(filePattern = "ND4_gene*")
 
-#Now convert both data sets to data frames for manipulation with tidyverse functions. Include a trailing "_pre" in the variable name to identify this data frame as a pre-processing item (prior to quality control).
-df_ND4_pre <- data.frame(ND4_Title = names(ND4_Stringset), ND4_Sequence = paste(ND4_Stringset))
+df_COX1_pre <- MergeFastaFiles(filePattern = "COX1_gene*")
 
-df_COX1_pre <- data.frame(COX1_Title = names(COX1_Stringset), COX1_Sequence = paste(COX1_Stringset))
 
 #Confirm we have the expected number of records for each gene (1400)
 (length(unique(df_COX1_pre$COX1_Title)))
