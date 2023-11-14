@@ -8,7 +8,7 @@ invisible(capture.output(
          library, character.only = TRUE)
 ))
 
-#Fetch the gene data required for the analysis to the working directory using functions from entrez documentation.
+#Fetch the gene data required for the analysis to the working directory using functions from entrez documentation. Additional Note: after further review of the code, it is necessary for retmax in this situation to be 1400. To ensure that this is the case, it would be reuired to make a copy of the Entrez_Functions in our working directory and remove the original. In the copy, it would be a simple fix to set the search2 retmax to 1400 instead of search1$count.
 FetchFastaFiles(searchTerm = "Mammalia[ORGN] AND ND4[Gene] AND 800:2400 [SLEN]", seqsPerFile = 100, fastaFileName = "ND4_gene")
 
 FetchFastaFiles(searchTerm = "Mammalia[ORGN] AND COX1[Gene] AND 800:2200 [SLEN]", seqsPerFile = 100, fastaFileName = "COX1_gene")
