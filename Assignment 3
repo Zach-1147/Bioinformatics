@@ -284,6 +284,10 @@ ggplot(unique_common_genera, aes(x = Genus_Name, y = 1, fill = sqrt(Scaled_Diffe
 df_COX1 <- df_COX1 %>%  
   rename(Sequence = COX1_Sequence)%>%  
   rename(Title = COX1_Title)
+  
+df_ND4 <- df_ND4 %>% 
+  rename(Sequence = ND4_Sequence) %>% 
+  rename(Title = ND4_Title) 
 
 #Add a label to indicate which data set each came from     
 df_COX1$Gene <- "COX1"
