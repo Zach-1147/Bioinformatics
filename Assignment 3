@@ -430,7 +430,7 @@ ggplot(results2, aes(x = Num_ntree, y = OOB_Error_Rate)) +
        y = "OOB Error Rate") + 
   theme(plot.title = element_text(size = 20), axis.title.x = element_text(vjust = -3))
 
-#From this, the optimal ntree value is 500. Run the classifier again, this time using the new ntree value.
+#From this, it appears that ntree has very little impact on OOB error rate. To verify this, run the classifier again using a ntree of 500, since it is the middle ground of values.
 gene_classifier3 <-  randomForest::randomForest(x = df_Training[, 10:30], y = as.factor(df_Training$Gene), ntree = 500, importance = TRUE)
 
 #Test the model again on the validation data set and print a table of results.
@@ -464,4 +464,4 @@ predict_Validation <- predict(genus_classifier2, df_Validation[, c(2, 10:30)])
 #Looking at accuracy.
 accuracy_validation <- sum(predict_Validation == df_Validation$Genus_Name) / length(predict_Validation)
 print(paste("Accuracy:", accuracy_validation))
-#This is only a very slight improvement over the accuracy using ntree = 100, indicating that ntree value has very little impact on the error rate for random tree classifications.
+#This is only a very slight improvement over the accuracy using ntree = 100, proving that ntree value has very little impact on the error rate for random tree classifications.
