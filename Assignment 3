@@ -397,6 +397,46 @@ gene_classifier2 <-  randomForest::randomForest(x = df_Training[, 10:30], y = as
 predict_Validation <- predict(gene_classifier2, df_Validation[, c(5, 10:30)])
 table(observed = df_Validation$Gene, predicted = predict_Validation) #Perfect classification!
 
+#ntree can also affect OOB error rate, so let's test again using ntree values from 100 to 1000. First save OOB error rate and ntree value as variables to save from each run of the loop.
+results2 <- data.frame(Num_ntree = integer(), OOB_Error_Rate = numeric())
+
+#Define the range of ntree values that will be tested in the loop.
+start2 <- 100
+end2 <- 1000
+
+for (value in seq(start2, end2, by = 100)) {
+  #each iteration will increase ntree by 
+  randomforrest_model <- randomForest::randomForest(
+    x = df_Training[, 10:30], 
+    y = as.factor(df_Training$Gene), 
+    ntree = value, 
+    importance = TRUE,
+  )
+  #Extract OOB error  in each iteration
+  oob_error <- randomforrest_model$err.rate[nrow(randomforrest_model$err.rate), "OOB"]
+  #Bind both feature size and error rate to the results data frame.
+  results2 <- rbind(results2, data.frame(Num_ntree = value, OOB_Error_Rate = oob_error))
+}
+
+#plot the a line curve with the number indices of features included on the x axis and the oob error on the y axis.
+ggplot(results2, aes(x = Num_ntree, y = OOB_Error_Rate)) +
+  geom_line(color = "#8F5902", linewidth = 1.5) +
+  theme_minimal() +
+  scale_x_continuous(breaks = seq(from = min(results2$Num_ntree), 
+                                  to = max(results2$Num_ntree), 
+                                  by = 100)) +
+  labs(title = "OOB Error Rate vs. ntree Value for Random Forest Classification of ND4 Versus COX1",
+       x = "ntree Value",
+       y = "OOB Error Rate") + 
+  theme(plot.title = element_text(size = 20), axis.title.x = element_text(vjust = -3))
+
+#From this, the optimal ntree value is 500. Run the classifier again, this time using the new ntree value.
+gene_classifier3 <-  randomForest::randomForest(x = df_Training[, 10:30], y = as.factor(df_Training$Gene), ntree = 500, importance = TRUE)
+
+#Test the model again on the validation data set and print a table of results.
+predict_Validation <- predict(gene_classifier3, df_Validation[, c(5, 10:30)])
+table(observed = df_Validation$Gene, predicted = predict_Validation) #Perfect classification again, as could be expected.
+
 #Now train a model with these features to see if they can predict the genus from which the sequence originates.
 genus_classifier1 <- randomForest::randomForest(x = df_Training[, 10:30], y = as.factor(df_Training$Genus_Name), ntree = 100, importance = TRUE)
 
@@ -410,3 +450,18 @@ predict_Validation <- predict(genus_classifier1, df_Validation[, c(2, 10:30)])
 #Looking at accuracy by summing how many predicted values were equal to the correct genus name in the validation set, divided by all rows.
 accuracy_validation <- sum(predict_Validation == df_Validation$Genus_Name) / length(predict_Validation)
 print(paste("Accuracy:", accuracy_validation)) #This is fairly impressive since we were able to resolve a high % (91% at time of writing) of Genus variation without even using sequence length as a feature. 
+
+#Now test it again, using ntree = 500.
+genus_classifier2 <- randomForest::randomForest(x = df_Training[, 10:30], y = as.factor(df_Training$Genus_Name), ntree = 500, importance = TRUE)
+
+#Looking at accuracy
+accuracy_training <- sum(diag(genus_classifier2$confusion)) / sum(genus_classifier2$confusion)
+print(paste("Accuracy:", accuracy_training))
+
+#Test on the validation data.
+predict_Validation <- predict(genus_classifier2, df_Validation[, c(2, 10:30)])
+
+#Looking at accuracy.
+accuracy_validation <- sum(predict_Validation == df_Validation$Genus_Name) / length(predict_Validation)
+print(paste("Accuracy:", accuracy_validation))
+#This is only a very slight improvement over the accuracy using ntree = 100, indicating that ntree value has very little impact on the error rate for random tree classifications.
