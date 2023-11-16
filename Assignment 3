@@ -216,7 +216,7 @@ cox1_plot <- ggplot(top_50_COX1, aes(x = Genus_Name, y = log1p(Record_Count), fi
   ylim(-7, 7) +
   theme_minimal() +
   #Since plotting side by side, put legend information in one plot
-  labs(title = NULL, x = "Each Bar Represents One Unique Genus; Data is log transformed", y = "COX1", subtitle = COX1_subtitle) +
+  labs(title = NULL, x = "Each Bar Represents One Unique Genus; Data is log transformed; only top 50 are visualized", y = "COX1", subtitle = COX1_subtitle) +
   theme(
     axis.text.x = element_blank(),
     axis.text.y = element_blank(),
