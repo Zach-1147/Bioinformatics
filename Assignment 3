@@ -2,38 +2,28 @@
 
 #Load relevant libraries, and some extra packages commented out below. I am suppressing messages here and loading libraries in one line to save space.
 #install.packages("gridExtra")
-#install.packages(patchwork")
+#install.packages("patchwork")
 invisible(capture.output(
   lapply(c("rentrez", "seqinr", "Biostrings", "tidyverse", "ggplot2", "patchwork", "gridExtra", "grid", "randomForest", "scales"),
          library, character.only = TRUE)
 ))
 
-#Call data from NCBI by first storing web_history data for searches of both genes. 
-ND4_search <- entrez_search(db = "nuccore", term = "(Mammalia[ORGN] AND ND4[Gene]) AND 800:2400[SLEN]", use_history = TRUE, retmax = 1400)
-ND4_search
+#Fetch the gene data required for the analysis to the working directory using functions from entrez documentation. Additional Note: after further review of the code, it is necessary for retmax in this situation to be 1400. To ensure that this is the case, it would be reuired to make a copy of the Entrez_Functions in our working directory and remove the original. In the copy, it would be a simple fix to set the search2 retmax to 1400 instead of search1$count.
+source("Entrez_Functions.R")
 
-COX1_search <- entrez_search(db = "nuccore", term = "(Mammalia[ORGN] AND COX1[Gene]) AND 800:2200[SLEN]", use_history = TRUE, retmax = 1400)
-COX1_search
+FetchFastaFiles(searchTerm = "Mammalia[ORGN] AND ND4[Gene] AND 800:2400 [SLEN]", seqsPerFile = 100, fastaFileName = "ND4_gene")
 
-#Save the fetch for ND4 to ND4_gene.fasta in the working directory using loop from entrez documentation
-for( seq_start in seq(1,1400,100)){
-    recs <- entrez_fetch(db="nuccore", web_history=ND4_search$web_history,
-    rettype="fasta", retmax=100, retstart=seq_start)
-    cat(recs, file="ND4_gene.fasta", append=TRUE)
-}
-for( seq_start in seq(1,1400,100)){
-    recs <- entrez_fetch(db="nuccore", web_history=COX1_search$web_history,
-    rettype="fasta", retmax=100, retstart=seq_start)
-    cat(recs, file="COX1_gene.fasta", append=TRUE)
-}
-#Convert both fasta files to DNA String Sets with Biostrings package.
-ND4_Stringset <- readDNAStringSet("ND4_gene.fasta")
-COX1_Stringset <- readDNAStringSet("COX1_gene.fasta")
+FetchFastaFiles(searchTerm = "Mammalia[ORGN] AND COX1[Gene] AND 800:2200 [SLEN]", seqsPerFile = 100, fastaFileName = "COX1_gene")
 
-#Now convert both data sets to data frames for manipulation with tidyverse functions. Include a trailing "_pre" in the variable name to identify this data frame as a pre-processing item (prior to quality control).
-df_ND4_pre <- data.frame(ND4_Title = names(ND4_Stringset), ND4_Sequence = paste(ND4_Stringset))
+#Merge the resulting fasta files for each gene into data frames
+df_ND4_pre <- MergeFastaFiles(filePattern = "ND4_gene*")
 
-df_COX1_pre <- data.frame(COX1_Title = names(COX1_Stringset), COX1_Sequence = paste(COX1_Stringset))
+df_COX1_pre <- MergeFastaFiles(filePattern = "COX1_gene*")
+
+#Change the column names to specify gene.
+colnames(df_ND4_pre) <- c("ND4_Title", "ND4_Sequence")
+
+colnames(df_COX1_pre) <- c("COX1_Title", "COX1_Sequence")
 
 #Confirm we have the expected number of records for each gene (1400)
 (length(unique(df_COX1_pre$COX1_Title)))
@@ -196,6 +186,23 @@ unique_common_genera <- unique_common_genera[ -c(3:4) ]
 
 #NOW PREPARE SUMMARY STATISTICS FOR THE ABOVE
 
+#In preparation for later steps, create a function that will allow for the unique genus counts for each gene to be inserted as a subtitle for the graphs we will generate.
+generate_title <- function(genuscolumn) {
+  #First get the unique count using dplyr
+  unique_counts <- genuscolumn %>%
+    summarize(unique_genus = n_distinct(Genus_Name, na.rm = TRUE))
+  
+  #Generate the title
+  title <- paste("Number of Unique Genus =", unique_counts)
+  
+  return(title)
+}
+
+#Now use the function to generate the two subtitles.
+COX1_subtitle <- generate_title(df_COX1)
+
+ND4_subtitle <- generate_title(df_ND4)
+
 #Create data variables with unique genera for ND4 and COX1 displaying only the top 50 most abundant genera for each, which captures the vast majority of the distribution as far as the random forest model is concerned.
 top_50_COX1 <- df_COX1_by_genus[1:50, ]
 top_50_ND4 <- df_ND4_by_genus[1:50, ]
@@ -209,7 +216,7 @@ cox1_plot <- ggplot(top_50_COX1, aes(x = Genus_Name, y = log1p(Record_Count), fi
   ylim(-7, 7) +
   theme_minimal() +
   #Since plotting side by side, put legend information in one plot
-  labs(title = NULL, x = "Each Bar Represents One Unique Genus; Data is log transformed", y = "COX1") +
+  labs(title = NULL, x = "Each Bar Represents One Unique Genus; Data is log transformed; only top 50 are visualized", y = "COX1", subtitle = COX1_subtitle) +
   theme(
     axis.text.x = element_blank(),
     axis.text.y = element_blank(),
@@ -228,7 +235,7 @@ nd4_plot <- ggplot(top_50_ND4, aes(x = Genus_Name, y = log1p(Record_Count), fill
   coord_polar() +
   ylim(-7, 7) +
   theme_minimal() +
-  labs(title = NULL, x = NULL, y = "ND4") +
+  labs(title = NULL, x = NULL, y = "ND4", subtitle = ND4_subtitle) +
   theme(
     axis.text.x = element_blank(),
     axis.text.y = element_blank(),
@@ -277,6 +284,10 @@ ggplot(unique_common_genera, aes(x = Genus_Name, y = 1, fill = sqrt(Scaled_Diffe
 df_COX1 <- df_COX1 %>%  
   rename(Sequence = COX1_Sequence)%>%  
   rename(Title = COX1_Title)
+  
+df_ND4 <- df_ND4 %>% 
+  rename(Sequence = ND4_Sequence) %>% 
+  rename(Title = ND4_Title) 
 
 #Add a label to indicate which data set each came from     
 df_COX1$Gene <- "COX1"
@@ -386,6 +397,46 @@ gene_classifier2 <-  randomForest::randomForest(x = df_Training[, 10:30], y = as
 predict_Validation <- predict(gene_classifier2, df_Validation[, c(5, 10:30)])
 table(observed = df_Validation$Gene, predicted = predict_Validation) #Perfect classification!
 
+#ntree can also affect OOB error rate, so let's test again using ntree values from 100 to 1000. First save OOB error rate and ntree value as variables to save from each run of the loop.
+results2 <- data.frame(Num_ntree = integer(), OOB_Error_Rate = numeric())
+
+#Define the range of ntree values that will be tested in the loop.
+start2 <- 100
+end2 <- 1000
+
+for (value in seq(start2, end2, by = 100)) {
+  #each iteration will increase ntree by 
+  randomforrest_model <- randomForest::randomForest(
+    x = df_Training[, 10:30], 
+    y = as.factor(df_Training$Gene), 
+    ntree = value, 
+    importance = TRUE,
+  )
+  #Extract OOB error  in each iteration
+  oob_error <- randomforrest_model$err.rate[nrow(randomforrest_model$err.rate), "OOB"]
+  #Bind both feature size and error rate to the results data frame.
+  results2 <- rbind(results2, data.frame(Num_ntree = value, OOB_Error_Rate = oob_error))
+}
+
+#plot the a line curve with the number indices of features included on the x axis and the oob error on the y axis.
+ggplot(results2, aes(x = Num_ntree, y = OOB_Error_Rate)) +
+  geom_line(color = "#8F5902", linewidth = 1.5) +
+  theme_minimal() +
+  scale_x_continuous(breaks = seq(from = min(results2$Num_ntree), 
+                                  to = max(results2$Num_ntree), 
+                                  by = 100)) +
+  labs(title = "OOB Error Rate vs. ntree Value for Random Forest Classification of ND4 Versus COX1",
+       x = "ntree Value",
+       y = "OOB Error Rate") + 
+  theme(plot.title = element_text(size = 20), axis.title.x = element_text(vjust = -3))
+
+#From this, it appears that ntree has very little impact on OOB error rate. To verify this, run the classifier again using a ntree of 500, since it is the middle ground of values.
+gene_classifier3 <-  randomForest::randomForest(x = df_Training[, 10:30], y = as.factor(df_Training$Gene), ntree = 500, importance = TRUE)
+
+#Test the model again on the validation data set and print a table of results.
+predict_Validation <- predict(gene_classifier3, df_Validation[, c(5, 10:30)])
+table(observed = df_Validation$Gene, predicted = predict_Validation) #Perfect classification again, as could be expected.
+
 #Now train a model with these features to see if they can predict the genus from which the sequence originates.
 genus_classifier1 <- randomForest::randomForest(x = df_Training[, 10:30], y = as.factor(df_Training$Genus_Name), ntree = 100, importance = TRUE)
 
@@ -399,3 +450,18 @@ predict_Validation <- predict(genus_classifier1, df_Validation[, c(2, 10:30)])
 #Looking at accuracy by summing how many predicted values were equal to the correct genus name in the validation set, divided by all rows.
 accuracy_validation <- sum(predict_Validation == df_Validation$Genus_Name) / length(predict_Validation)
 print(paste("Accuracy:", accuracy_validation)) #This is fairly impressive since we were able to resolve a high % (91% at time of writing) of Genus variation without even using sequence length as a feature. 
+
+#Now test it again, using ntree = 500.
+genus_classifier2 <- randomForest::randomForest(x = df_Training[, 10:30], y = as.factor(df_Training$Genus_Name), ntree = 500, importance = TRUE)
+
+#Looking at accuracy
+accuracy_training <- sum(diag(genus_classifier2$confusion)) / sum(genus_classifier2$confusion)
+print(paste("Accuracy:", accuracy_training))
+
+#Test on the validation data.
+predict_Validation <- predict(genus_classifier2, df_Validation[, c(2, 10:30)])
+
+#Looking at accuracy.
+accuracy_validation <- sum(predict_Validation == df_Validation$Genus_Name) / length(predict_Validation)
+print(paste("Accuracy:", accuracy_validation))
+#This is only a very slight improvement over the accuracy using ntree = 100, proving that ntree value has very little impact on the error rate for random tree classifications.
